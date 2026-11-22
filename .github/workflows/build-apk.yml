@@ -3,17 +3,11 @@ name: Build Noor Al-Quran APK
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
     tags:
       - 'v*'
-
   pull_request:
-    branches:
-      - main
-      - master
-
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -21,7 +15,7 @@ permissions:
 
 jobs:
   build:
-    name: Test & Build Noor Al-Quran
+    name: Build Noor Al-Quran
     runs-on: ubuntu-latest
 
     steps:
@@ -36,9 +30,12 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
 
-      - name: Accept Android SDK Licenses
+      - name: Accept SDK licenses manually
         run: |
+          mkdir -p "$ANDROID_HOME/licenses"
           yes | sdkmanager --licenses || true
 
       - name: Set up Gradle
