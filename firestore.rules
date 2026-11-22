@@ -1,0 +1,168 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidBookmark(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.verseKey is string && data.verseKey.size() >= 3 && data.verseKey.size() <= 16 &&
+             data.surahId is int && data.surahId >= 1 && data.surahId <= 114 &&
+             data.ayahNumber is int && data.ayahNumber >= 1 && data.ayahNumber <= 286 &&
+             data.collectionId is string && data.collectionId.size() >= 1 && data.collectionId.size() <= 64 &&
+             (!('label' in data) || (data.label is string && data.label.size() <= 120)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCollection(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.colorHex is string && data.colorHex.size() >= 4 && data.colorHex.size() <= 12 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidNote(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.verseKey is string && data.verseKey.size() >= 3 && data.verseKey.size() <= 16 &&
+             data.surahId is int && data.surahId >= 1 && data.surahId <= 114 &&
+             data.ayahNumber is int && data.ayahNumber >= 1 && data.ayahNumber <= 286 &&
+             data.noteText is string && data.noteText.size() >= 1 && data.noteText.size() <= 4000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidProgress(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.lastSurahId is int && data.lastSurahId >= 1 && data.lastSurahId <= 114 &&
+             data.lastAyahNumber is int && data.lastAyahNumber >= 1 && data.lastAyahNumber <= 286 &&
+             data.lastVerseKey is string && data.lastVerseKey.size() >= 3 && data.lastVerseKey.size() <= 16 &&
+             data.dailyAyahGoal is int && data.dailyAyahGoal >= 1 && data.dailyAyahGoal <= 1000 &&
+             data.khatamTargetDays is int && data.khatamTargetDays >= 1 && data.khatamTargetDays <= 3650 &&
+             data.khatamCompletedAyahs is int && data.khatamCompletedAyahs >= 0 && data.khatamCompletedAyahs <= 6236 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidStreak(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.dateKey is string && data.dateKey.size() == 10 && data.dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+             data.ayahsReadCount is int && data.ayahsReadCount >= 0 && data.ayahsReadCount <= 6236 &&
+             data.minutesSpent is int && data.minutesSpent >= 0 && data.minutesSpent <= 1440 &&
+             data.tasbeehCount is int && data.tasbeehCount >= 0 && data.tasbeehCount <= 100000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId} {
+      match /bookmarks/{bookmarkId} {
+        allow get: if isOwner(userId) && isValidId(bookmarkId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(bookmarkId) &&
+                         incoming().keys().hasAll(['userId', 'verseKey', 'surahId', 'ayahNumber', 'collectionId', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'verseKey', 'surahId', 'ayahNumber', 'collectionId', 'label', 'createdAt', 'updatedAt']) &&
+                         isValidBookmark(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(bookmarkId) &&
+                         isValidBookmark(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['collectionId', 'label', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(bookmarkId);
+      }
+
+      match /collections/{collectionId} {
+        allow get: if isOwner(userId) && isValidId(collectionId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(collectionId) &&
+                         incoming().keys().hasAll(['userId', 'name', 'colorHex', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'name', 'colorHex', 'createdAt', 'updatedAt']) &&
+                         isValidCollection(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(collectionId) &&
+                         isValidCollection(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'colorHex', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(collectionId);
+      }
+
+      match /notes/{noteId} {
+        allow get: if isOwner(userId) && isValidId(noteId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(noteId) &&
+                         incoming().keys().hasAll(['userId', 'verseKey', 'surahId', 'ayahNumber', 'noteText', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'verseKey', 'surahId', 'ayahNumber', 'noteText', 'createdAt', 'updatedAt']) &&
+                         isValidNote(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(noteId) &&
+                         isValidNote(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['noteText', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(noteId);
+      }
+
+      match /progress/{progressId} {
+        allow get: if isOwner(userId) && isValidId(progressId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(progressId) &&
+                         incoming().keys().hasAll(['userId', 'lastSurahId', 'lastAyahNumber', 'lastVerseKey', 'dailyAyahGoal', 'khatamTargetDays', 'khatamCompletedAyahs', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'lastSurahId', 'lastAyahNumber', 'lastVerseKey', 'dailyAyahGoal', 'khatamTargetDays', 'khatamCompletedAyahs', 'createdAt', 'updatedAt']) &&
+                         isValidProgress(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(progressId) &&
+                         isValidProgress(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['lastSurahId', 'lastAyahNumber', 'lastVerseKey', 'dailyAyahGoal', 'khatamTargetDays', 'khatamCompletedAyahs', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(progressId);
+      }
+
+      match /streaks/{dateKey} {
+        allow get: if isOwner(userId) && isValidId(dateKey);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(dateKey) &&
+                         incoming().keys().hasAll(['userId', 'dateKey', 'ayahsReadCount', 'minutesSpent', 'tasbeehCount', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'dateKey', 'ayahsReadCount', 'minutesSpent', 'tasbeehCount', 'createdAt', 'updatedAt']) &&
+                         isValidStreak(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(dateKey) &&
+                         isValidStreak(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().dateKey == existing().dateKey &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['ayahsReadCount', 'minutesSpent', 'tasbeehCount', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(dateKey);
+      }
+    }
+  }
+}

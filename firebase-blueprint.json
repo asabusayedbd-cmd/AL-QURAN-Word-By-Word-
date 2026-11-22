@@ -1,0 +1,138 @@
+{
+  "entities": {
+    "UserBookmark": {
+      "title": "UserBookmark",
+      "description": "Cloud-synced Quran verse bookmark belonging to a user collection.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated owner UID"
+        },
+        "verseKey": {
+          "type": "string",
+          "description": "Canonical Surah:Ayah key (e.g., 2:255)"
+        },
+        "surahId": {
+          "type": "integer",
+          "description": "Surah number 1..114"
+        },
+        "ayahNumber": {
+          "type": "integer",
+          "description": "Ayah number within Surah"
+        },
+        "collectionId": {
+          "type": "string",
+          "description": "Parent bookmark collection ID"
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional user bookmark label"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp (FieldValue.serverTimestamp())"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp (FieldValue.serverTimestamp())"
+        }
+      },
+      "required": ["userId", "verseKey", "surahId", "ayahNumber", "collectionId", "createdAt", "updatedAt"]
+    },
+    "UserCollection": {
+      "title": "UserCollection",
+      "description": "User-defined bookmark folder (e.g., Hifz, Favorites, Comfort).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "colorHex": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "colorHex", "createdAt", "updatedAt"]
+    },
+    "UserNote": {
+      "title": "UserNote",
+      "description": "Personal reflection note attached to a specific Ayah.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "verseKey": { "type": "string" },
+        "surahId": { "type": "integer" },
+        "ayahNumber": { "type": "integer" },
+        "noteText": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "verseKey", "surahId", "ayahNumber", "noteText", "createdAt", "updatedAt"]
+    },
+    "ReadingProgress": {
+      "title": "ReadingProgress",
+      "description": "Last-read Quran position, daily Ayah goal, and Khatam plan state.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "lastSurahId": { "type": "integer" },
+        "lastAyahNumber": { "type": "integer" },
+        "lastVerseKey": { "type": "string" },
+        "dailyAyahGoal": { "type": "integer" },
+        "khatamTargetDays": { "type": "integer" },
+        "khatamCompletedAyahs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId",
+        "lastSurahId",
+        "lastAyahNumber",
+        "lastVerseKey",
+        "dailyAyahGoal",
+        "khatamTargetDays",
+        "khatamCompletedAyahs",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "HabitStreak": {
+      "title": "HabitStreak",
+      "description": "Daily worship activity log keyed by YYYY-MM-DD.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "ayahsReadCount": { "type": "integer" },
+        "minutesSpent": { "type": "integer" },
+        "tasbeehCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "dateKey", "ayahsReadCount", "minutesSpent", "tasbeehCount", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/bookmarks/{bookmarkId}": {
+      "schema": { "$ref": "#/entities/UserBookmark" },
+      "description": "User's personal Quran bookmarks"
+    },
+    "/users/{userId}/collections/{collectionId}": {
+      "schema": { "$ref": "#/entities/UserCollection" },
+      "description": "User's bookmark folders"
+    },
+    "/users/{userId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/UserNote" },
+      "description": "User's Ayah reflection notes"
+    },
+    "/users/{userId}/progress/{progressId}": {
+      "schema": { "$ref": "#/entities/ReadingProgress" },
+      "description": "User's reading progress and Khatam target"
+    },
+    "/users/{userId}/streaks/{dateKey}": {
+      "schema": { "$ref": "#/entities/HabitStreak" },
+      "description": "User's daily Ibadah habit streak logs"
+    }
+  }
+}
