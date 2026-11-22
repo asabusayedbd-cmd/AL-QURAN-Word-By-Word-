@@ -1,20 +1,27 @@
+
 name: Build Noor Al-Quran APK
 
 on:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
     tags:
       - 'v*'
+
   pull_request:
-    branches: [main, master]
+    branches:
+      - main
+      - master
+
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-apk:
-    name: Test & Build Android APK
+  build:
+    name: Build Noor Al-Quran
     runs-on: ubuntu-latest
 
     steps:
@@ -30,62 +37,49 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Set up Gradle 9.3.1
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
 
-      - name: Prepare signing keystore & optional secrets
-        env:
-          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+      - name: Check Gradle Wrapper
         run: |
-          if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
+          if [ ! -f gradlew ]; then
+            echo "Gradle wrapper not found!"
+            exit 1
           fi
-          if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
-            echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
-          fi
+          chmod +x gradlew
 
-      - name: Run unit tests
-        run: gradle :app:testDebugUnitTest --no-daemon
+      - name: Run Unit Tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon
+        run: ./gradlew :app:assembleDebug --no-daemon
 
-      - name: Upload Debug APK artifact
+      - name: Build Release APK
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: noor-al-quran-debug-apk
+          name: Noor-Al-Quran-Debug
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
           if-no-files-found: error
 
-      - name: Build Signed Release APK (when keystore secrets are configured)
-        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.STORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
-          gradle :app:assembleRelease --no-daemon
-          rm -f "$KEYSTORE_PATH"
-
-      - name: Upload Signed Release APK artifact
-        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.STORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
+      - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: noor-al-quran-release-apk
+          name: Noor-Al-Quran-Release
           path: app/build/outputs/apk/release/*.apk
           retention-days: 30
           if-no-files-found: error
 
-      - name: Create GitHub Release on version tags
+      - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true
           files: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
+          
