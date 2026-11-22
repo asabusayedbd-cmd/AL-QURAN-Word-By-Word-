@@ -104,10 +104,15 @@ class QuranSyncRepository(
 
                     for (tr in v.translations) {
                         val langCode = when (tr.resourceId) {
-                            161, 162 -> "bn"
-                            97 -> "ur"
-                            33 -> "id"
-                            77 -> "tr"
+                            161, 162, 163 -> "bn"
+                            97, 54, 158, 234 -> "ur"
+                            33, 134 -> "id"
+                            77, 52 -> "tr"
+                            31 -> "fr"
+                            83 -> "es"
+                            122 -> "hi"
+                            27 -> "de"
+                            39 -> "ms"
                             else -> "en"
                         }
                         ayahTranslationsToSave.add(
@@ -121,9 +126,10 @@ class QuranSyncRepository(
                         )
                     }
 
+                    val reciter = quranDao.getReciter(reciterId)
                     val audioUrl = v.audio?.url?.let { raw ->
                         if (raw.startsWith("http")) raw else "https://verses.quran.com/$raw"
-                    } ?: buildFallbackAudioUrl(reciterId, surahId, v.verseNumber)
+                    } ?: buildFallbackAudioUrl(reciter?.baseUrl, reciterId, surahId, v.verseNumber)
 
                     val segJson = JSONArray().apply {
                         v.audio?.segments?.forEach { seg ->
@@ -153,7 +159,19 @@ class QuranSyncRepository(
 
             database.withTransaction {
                 quranDao.insertAyahs(ayahsToSave)
-                quranDao.insertWords(wordsToSave)
+                // Preserve richer root/lemma/grammar metadata if starter words already exist
+                val existingWords = ayahsToSave.flatMap { quranDao.getWordsForAyah(it.id) }.associateBy { it.id }
+                val mergedWords = wordsToSave.map { w ->
+                    val old = existingWords[w.id]
+                    if (old != null) {
+                        w.copy(
+                            rootArabic = old.rootArabic,
+                            lemmaArabic = old.lemmaArabic,
+                            grammarTagJson = old.grammarTagJson
+                        )
+                    } else w
+                }
+                quranDao.insertWords(mergedWords)
                 quranDao.insertWordTranslations(wordTranslationsToSave)
                 quranDao.insertAyahTranslations(ayahTranslationsToSave)
                 quranDao.insertAudioSegments(segmentsToSave)
@@ -181,7 +199,7 @@ class QuranSyncRepository(
 
             val response = apiService.getAyahTafsir(tafsirId, verseKey)
             val html = response.tafsir?.text?.takeIf { it.isNotBlank() }
-                ?: return@withContext Result.failure(IllegalStateException("Empty Tafsir response"))
+                ?: return@withContext Result.failure(IllegalStateException("Tafsir not available on API for $verseKey"))
             val entity = AyahTafsirEntity(
                 sourceId = tafsirId,
                 ayahId = ayahId,
@@ -190,11 +208,41 @@ class QuranSyncRepository(
                 tafsirHtmlOrMarkdown = html
             )
             quranDao.insertAyahTafsirs(listOf(entity))
+            quranDao.updateTafsirSourceStatus(tafsirId, downloaded = true, enabled = true)
             Result.success(entity)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e("QuranSync", "Failed fetching Tafsir $tafsirId for $verseKey", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun refreshRemoteTafsirCatalog(): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val existingMap = quranDao.getAllTafsirSources().associateBy { it.id }
+            val remote = apiService.getTafsirResources("en").tafsirs
+            val entities = remote.map { item ->
+                val prev = existingMap[item.id]
+                val langCode = mapLanguageNameToCode(item.languageName)
+                com.example.core.database.TafsirSourceEntity(
+                    id = item.id,
+                    languageCode = langCode,
+                    languageName = item.languageName ?: langCode.uppercase(),
+                    tafsirName = item.name,
+                    isDownloaded = prev?.isDownloaded ?: false,
+                    isEnabled = prev?.isEnabled ?: false,
+                    fileSizeKb = prev?.fileSizeKb ?: 7500
+                )
+            }
+            if (entities.isNotEmpty()) {
+                quranDao.insertTafsirSources(entities)
+            }
+            Result.success(entities.size)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("QuranSync", "Could not refresh remote tafsir catalog", e)
             Result.failure(e)
         }
     }
@@ -219,20 +267,46 @@ class QuranSyncRepository(
         }
     }
 
-    private fun buildFallbackAudioUrl(reciterId: Int, surahId: Int, ayahNumber: Int): String {
-        val folder = when (reciterId) {
-            1 -> "Husary_128kbps"
-            9 -> "Minshawy_Murattal_128kbps"
-            else -> "Alafasy_128kbps"
+    private fun mapLanguageNameToCode(languageName: String?): String {
+        return when (languageName?.lowercase()?.trim()) {
+            "bengali", "bangla" -> "bn"
+            "arabic" -> "ar"
+            "english" -> "en"
+            "urdu" -> "ur"
+            "indonesian" -> "id"
+            "turkish" -> "tr"
+            "russian" -> "ru"
+            "kurdish" -> "ku"
+            "french" -> "fr"
+            "spanish" -> "es"
+            "hindi" -> "hi"
+            "malay" -> "ms"
+            "german" -> "de"
+            else -> languageName?.take(2)?.lowercase() ?: "en"
         }
+    }
+
+    private fun buildFallbackAudioUrl(baseUrl: String?, reciterId: Int, surahId: Int, ayahNumber: Int): String {
+        val resolvedBase = baseUrl?.takeIf { it.isNotBlank() } ?: when (reciterId) {
+            1 -> "https://everyayah.com/data/Husary_128kbps/"
+            9 -> "https://everyayah.com/data/Minshawy_Murattal_128kbps/"
+            else -> "https://everyayah.com/data/Alafasy_128kbps/"
+        }
+        val normalizedBase = if (resolvedBase.endsWith("/")) resolvedBase else "$resolvedBase/"
         val s = surahId.toString().padStart(3, '0')
         val a = ayahNumber.toString().padStart(3, '0')
-        return "https://everyayah.com/data/$folder/$s$a.mp3"
+        return "${normalizedBase}${s}${a}.mp3"
     }
 
     private fun cleanHtml(raw: String): String {
         return raw.replace(Regex("<sup[^>]*>.*?</sup>"), "")
             .replace(Regex("<[^>]+>"), "")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&rsquo;", "’")
+            .replace("&lsquo;", "‘")
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
             .trim()
     }
 }

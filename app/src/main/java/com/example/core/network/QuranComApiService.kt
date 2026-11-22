@@ -82,6 +82,19 @@ data class TranslationResourceItemDto(
     @Json(name = "language_name") val languageName: String? = null
 )
 
+@JsonClass(generateAdapter = true)
+data class TafsirResourcesDto(
+    val tafsirs: List<TafsirResourceItemDto> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class TafsirResourceItemDto(
+    val id: Int,
+    val name: String,
+    @Json(name = "author_name") val authorName: String? = null,
+    @Json(name = "language_name") val languageName: String? = null
+)
+
 interface QuranComApiService {
     @GET("verses/by_chapter/{chapter_number}")
     suspend fun getVersesByChapter(
@@ -106,4 +119,9 @@ interface QuranComApiService {
     suspend fun getTranslationResources(
         @Query("language") language: String = "en"
     ): TranslationResourcesDto
+
+    @GET("resources/tafsirs")
+    suspend fun getTafsirResources(
+        @Query("language") language: String = "en"
+    ): TafsirResourcesDto
 }

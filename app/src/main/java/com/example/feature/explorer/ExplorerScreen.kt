@@ -39,12 +39,16 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -91,6 +95,14 @@ fun ExplorerScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val searchFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(initialFocusSearch) {
+        if (initialFocusSearch) {
+            kotlinx.coroutines.delay(120L)
+            runCatching { searchFocusRequester.requestFocus() }
+        }
+    }
 
     val tabTitles = listOf(
         stringResource(R.string.tab_surah),
@@ -128,6 +140,7 @@ fun ExplorerScreen(
                     shape = MaterialTheme.shapes.large,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .focusRequester(searchFocusRequester)
                         .testTag("explorer_search_input")
                 )
 
@@ -355,13 +368,15 @@ fun ExplorerScreen(
                                 val page = idx + 1
                                 AssistChip(
                                     onClick = {
-                                        val approxSurah = when {
-                                            page == 1 -> 1
-                                            page <= 49 -> 2
-                                            page >= 604 -> 114
-                                            else -> ((page * 114) / 604).coerceIn(1, 114)
-                                        }
-                                        onOpenReader(approxSurah, 1)
+                                        val resolvedSurah = state.surahs
+                                            .lastOrNull { it.startPage <= page }?.id
+                                            ?: when {
+                                                page == 1 -> 1
+                                                page <= 49 -> 2
+                                                page >= 604 -> 114
+                                                else -> ((page * 114) / 604).coerceIn(1, 114)
+                                            }
+                                        onOpenReader(resolvedSurah, 1)
                                     },
                                     label = { Text("P. $page") },
                                     modifier = Modifier.testTag("mushaf_page_$page")

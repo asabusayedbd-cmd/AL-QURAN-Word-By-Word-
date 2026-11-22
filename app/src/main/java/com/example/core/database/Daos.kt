@@ -67,8 +67,21 @@ interface QuranDao {
     @Query("SELECT * FROM words WHERE ayahId = :ayahId ORDER BY position ASC")
     suspend fun getWordsForAyah(ayahId: Int): List<WordEntity>
 
-    @Query("SELECT * FROM words WHERE rootArabic = :rootArabic AND rootArabic != '' LIMIT 25")
+    @Query("SELECT * FROM words WHERE rootArabic = :rootArabic AND rootArabic != '' ORDER BY ayahId ASC, position ASC LIMIT 30")
     suspend fun getWordsByRoot(rootArabic: String): List<WordEntity>
+
+    @Query(
+        """
+        SELECT a.verseKey AS verseKey, a.surahId AS surahId, a.ayahNumber AS ayahNumber,
+               a.textUthmani AS ayahArabic, w.textUthmani AS wordArabic, w.transliteration AS transliteration
+        FROM words w
+        INNER JOIN ayahs a ON a.id = w.ayahId
+        WHERE w.rootArabic = :rootArabic AND w.rootArabic != ''
+        ORDER BY a.surahId ASC, a.ayahNumber ASC, w.position ASC
+        LIMIT 25
+        """
+    )
+    suspend fun getRootOccurrences(rootArabic: String): List<WordOccurrenceProjection>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWords(words: List<WordEntity>)
@@ -81,6 +94,12 @@ interface QuranDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWordTranslations(translations: List<WordTranslationEntity>)
+
+    @Query("SELECT COUNT(*) FROM translation_sources")
+    suspend fun countTranslationSources(): Int
+
+    @Query("SELECT * FROM translation_sources")
+    suspend fun getAllTranslationSources(): List<TranslationSourceEntity>
 
     @Query("SELECT * FROM translation_sources ORDER BY id ASC")
     fun observeTranslationSources(): Flow<List<TranslationSourceEntity>>
@@ -106,6 +125,12 @@ interface QuranDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAyahTranslations(translations: List<AyahTranslationEntity>)
 
+    @Query("SELECT COUNT(*) FROM tafsir_sources")
+    suspend fun countTafsirSources(): Int
+
+    @Query("SELECT * FROM tafsir_sources")
+    suspend fun getAllTafsirSources(): List<TafsirSourceEntity>
+
     @Query("SELECT * FROM tafsir_sources ORDER BY id ASC")
     fun observeTafsirSources(): Flow<List<TafsirSourceEntity>>
 
@@ -124,6 +149,12 @@ interface QuranDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAyahTafsirs(tafsirs: List<AyahTafsirEntity>)
 
+    @Query("SELECT COUNT(*) FROM audio_reciters")
+    suspend fun countReciters(): Int
+
+    @Query("SELECT * FROM audio_reciters WHERE id = :reciterId LIMIT 1")
+    suspend fun getReciter(reciterId: Int): AudioReciterEntity?
+
     @Query("SELECT * FROM audio_reciters ORDER BY id ASC")
     fun observeReciters(): Flow<List<AudioReciterEntity>>
 
@@ -139,6 +170,15 @@ interface QuranDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAudioSegments(segments: List<AudioSegmentEntity>)
 }
+
+data class WordOccurrenceProjection(
+    val verseKey: String,
+    val surahId: Int,
+    val ayahNumber: Int,
+    val ayahArabic: String,
+    val wordArabic: String,
+    val transliteration: String
+)
 
 @Dao
 interface UserLibraryDao {

@@ -9,10 +9,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
@@ -30,6 +33,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,9 +41,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.core.database.AyahEntity
@@ -67,6 +74,20 @@ fun TafsirSheet(
     onDismiss: () -> Unit
 ) {
     var noteDraft by remember(ayah.verseKey, existingNoteText) { mutableStateOf(existingNoteText) }
+    var langFilter by remember { mutableStateOf("ALL") }
+
+    val availableLangs = remember(tafsirSources) {
+        listOf("ALL") + tafsirSources.map { it.languageCode.uppercase() }.distinct()
+    }
+    val filteredSources = remember(tafsirSources, langFilter, selectedTafsirSourceId) {
+        val base = if (langFilter == "ALL") {
+            tafsirSources
+        } else {
+            tafsirSources.filter { it.languageCode.equals(langFilter, ignoreCase = true) }
+        }
+        base.sortedByDescending { it.id == selectedTafsirSourceId }
+    }
+
     val activeSource = tafsirSources.firstOrNull { it.id == selectedTafsirSourceId } ?: tafsirSources.firstOrNull()
     val activeTafsir = loadedTafsirs.firstOrNull { it.sourceId == selectedTafsirSourceId }
 
@@ -95,7 +116,7 @@ fun TafsirSheet(
                         style = MaterialTheme.typography.titleLarge
                     )
                     Text(
-                        text = "$surahName • ${ayah.verseKey}",
+                        text = "$surahName • ${ayah.verseKey} • ${tafsirSources.size} Verified Tafsirs",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -111,19 +132,45 @@ fun TafsirSheet(
                 }
             }
 
-            // Switchable Tafsir sources
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                tafsirSources.forEach { source ->
+            // Language filter chips
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(availableLangs) { lang ->
+                    FilterChip(
+                        selected = langFilter == lang,
+                        onClick = { langFilter = lang },
+                        label = {
+                            val label = when (lang) {
+                                "ALL" -> "All (${tafsirSources.size})"
+                                "BN" -> "বাংলা"
+                                "EN" -> "English"
+                                "AR" -> "العربية"
+                                "UR" -> "اردو"
+                                "RU" -> "Русский"
+                                else -> lang
+                            }
+                            Text(label)
+                        }
+                    )
+                }
+            }
+
+            // Scrollable Switchable Tafsir sources (supports all 18+ classical & contemporary Tafsirs)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(filteredSources, key = { it.id }) { source ->
+                    val isCached = loadedTafsirs.any { it.sourceId == source.id }
                     FilterChip(
                         selected = source.id == selectedTafsirSourceId,
                         onClick = { onSelectTafsirSource(source) },
+                        leadingIcon = if (isCached) {
+                            { Icon(Icons.Default.CheckCircle, contentDescription = "Cached offline", modifier = Modifier.size(16.dp)) }
+                        } else null,
                         label = { Text("${source.tafsirName} (${source.languageCode.uppercase()})") },
                         modifier = Modifier.testTag("tafsir_source_chip_${source.id}")
                     )
                 }
             }
 
-            // Verified Tafsir body
+            // Verified Tafsir body (proper RTL alignment for Arabic / Urdu Tafsirs)
             Surface(
                 shape = MaterialTheme.shapes.medium,
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
@@ -134,26 +181,38 @@ fun TafsirSheet(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Loading verified Tafsir…", style = MaterialTheme.typography.bodyMedium)
+                            Text("Loading verified Tafsir from Quran Foundation API…", style = MaterialTheme.typography.bodyMedium)
                         }
                     } else if (activeTafsir != null) {
                         Text(
-                            text = activeTafsir.tafsirName,
+                            text = "${activeTafsir.tafsirName} (${activeTafsir.languageCode.uppercase()})",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.primary
                         )
                         val cleanBody = activeTafsir.tafsirHtmlOrMarkdown
                             .replace(Regex("<[^>]+>"), "\n")
+                            .replace("&quot;", "\"")
+                            .replace("&#39;", "'")
+                            .replace("&rsquo;", "’")
+                            .replace("&nbsp;", " ")
+                            .replace("&amp;", "&")
                             .replace(Regex("\n{2,}"), "\n\n")
                             .trim()
-                        Text(
-                            text = cleanBody,
-                            style = banglaSafeBodyStyle(translationFontSizeSp, activeTafsir.languageCode)
-                        )
+                        val isRtlTafsir = activeTafsir.languageCode.lowercase() in setOf("ar", "ur")
+                        CompositionLocalProvider(
+                            LocalLayoutDirection provides if (isRtlTafsir) LayoutDirection.Rtl else LayoutDirection.Ltr
+                        ) {
+                            Text(
+                                text = cleanBody,
+                                style = banglaSafeBodyStyle(translationFontSizeSp, activeTafsir.languageCode),
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     } else {
                         Text(
-                            text = "This Tafsir entry is not yet cached locally for ${ayah.verseKey}. Tap below to fetch from verified Quran Foundation API.",
+                            text = "This Tafsir entry is not yet cached locally for ${ayah.verseKey}. Tap below to fetch from the verified Quran Foundation repository.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

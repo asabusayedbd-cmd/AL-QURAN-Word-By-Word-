@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.core.database.AudioReciterEntity
 import com.example.core.database.NoorDatabase
 import com.example.core.database.SurahEntity
+import com.example.core.database.TafsirSourceEntity
 import com.example.core.database.TranslationSourceEntity
 import com.example.core.firebase.GoogleAuthHelper
 import com.example.core.firebase.authStateFlow
@@ -27,13 +28,15 @@ import kotlinx.coroutines.launch
 data class SettingsUiState(
     val preferences: UserPreferences = UserPreferences(),
     val translationSources: List<TranslationSourceEntity> = emptyList(),
+    val tafsirSources: List<TafsirSourceEntity> = emptyList(),
     val reciters: List<AudioReciterEntity> = emptyList(),
     val surahs: List<SurahEntity> = emptyList(),
     val signedInUserEmail: String? = null,
     val signedInUserName: String? = null,
     val statusMessage: String? = null,
     val busySourceId: Int? = null,
-    val busySurahId: Int? = null
+    val busySurahId: Int? = null,
+    val isRefreshingTafsirs: Boolean = false
 )
 
 class SettingsViewModel(
@@ -47,39 +50,49 @@ class SettingsViewModel(
     private val _statusMessage = MutableStateFlow<String?>(null)
     private val _busySourceId = MutableStateFlow<Int?>(null)
     private val _busySurahId = MutableStateFlow<Int?>(null)
+    private val _isRefreshingTafsirs = MutableStateFlow(false)
+
+    private val catalogsFlow = combine(
+        quranDao.observeTranslationSources(),
+        quranDao.observeTafsirSources(),
+        quranDao.observeReciters(),
+        quranDao.observeAllSurahs()
+    ) { tr, taf, rec, sur ->
+        Pair(tr to taf, rec to sur)
+    }
+
+    private val statusFlow = combine(
+        _statusMessage,
+        _busySourceId,
+        _busySurahId,
+        _isRefreshingTafsirs
+    ) { msg, busySrc, busySurah, refreshingTaf ->
+        Pair(msg to busySrc, busySurah to refreshingTaf)
+    }
 
     val uiState: StateFlow<SettingsUiState> = combine(
         preferencesRepository.preferencesFlow,
-        quranDao.observeTranslationSources(),
-        quranDao.observeReciters(),
-        quranDao.observeAllSurahs(),
+        catalogsFlow,
         Firebase.auth.authStateFlow(),
-        _statusMessage,
-        _busySourceId,
-        _busySurahId
-    ) { array ->
-        val prefs = array[0] as UserPreferences
-        @Suppress("UNCHECKED_CAST")
-        val trSources = array[1] as List<TranslationSourceEntity>
-        @Suppress("UNCHECKED_CAST")
-        val reciters = array[2] as List<AudioReciterEntity>
-        @Suppress("UNCHECKED_CAST")
-        val surahs = array[3] as List<SurahEntity>
-        val user = array[4] as com.google.firebase.auth.FirebaseUser?
-        val msg = array[5] as String?
-        val busySrc = array[6] as Int?
-        val busySurah = array[7] as Int?
+        statusFlow
+    ) { prefs, catalogs, user, statuses ->
+        val (trSources, tafSources) = catalogs.first
+        val (reciters, surahs) = catalogs.second
+        val (msg, busySrc) = statuses.first
+        val (busySurah, refreshingTaf) = statuses.second
 
         SettingsUiState(
             preferences = prefs,
             translationSources = trSources,
+            tafsirSources = tafSources,
             reciters = reciters,
             surahs = surahs,
             signedInUserEmail = user?.email,
             signedInUserName = user?.displayName,
             statusMessage = msg,
             busySourceId = busySrc,
-            busySurahId = busySurah
+            busySurahId = busySurah,
+            isRefreshingTafsirs = refreshingTaf
         )
     }.stateIn(
         scope = viewModelScope,
@@ -160,6 +173,32 @@ class SettingsViewModel(
             scope = viewModelScope,
             onSignOutComplete = { _statusMessage.value = "Switched to offline Guest mode." }
         )
+    }
+
+    fun setActiveReciter(reciter: AudioReciterEntity) {
+        viewModelScope.launch {
+            preferencesRepository.setActiveReciterId(reciter.id)
+            _statusMessage.value = "Default Qari set to ${reciter.name}"
+        }
+    }
+
+    fun selectDefaultTafsirSource(source: TafsirSourceEntity) {
+        viewModelScope.launch {
+            preferencesRepository.setActiveTafsirSourceId(source.id)
+            _statusMessage.value = "Default Tafsir set to ${source.tafsirName}"
+        }
+    }
+
+    fun syncRemoteTafsirCatalog() {
+        viewModelScope.launch {
+            _isRefreshingTafsirs.value = true
+            val res = syncRepository.refreshRemoteTafsirCatalog()
+            _statusMessage.value = res.fold(
+                onSuccess = { count -> "Synced $count verified Tafsirs from Quran Foundation API" },
+                onFailure = { err -> "Could not refresh catalog: ${err.localizedMessage}" }
+            )
+            _isRefreshingTafsirs.value = false
+        }
     }
 
     fun clearStatusMessage() {

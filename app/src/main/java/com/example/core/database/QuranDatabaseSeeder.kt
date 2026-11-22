@@ -21,7 +21,12 @@ class QuranDatabaseSeeder(
 
     suspend fun seedIfNeeded() = withContext(Dispatchers.IO) {
         try {
-            if (quranDao.countSurahs() >= 114 && quranDao.getAyahByKey("1:1") != null) {
+            val alreadyHasCoreText = quranDao.countSurahs() >= 114 && quranDao.getAyahByKey("1:1") != null
+            val needsCatalogUpgrade = quranDao.countReciters() < 50 ||
+                quranDao.countTafsirSources() < 15 ||
+                quranDao.countTranslationSources() < 12
+
+            if (alreadyHasCoreText && !needsCatalogUpgrade) {
                 ensureDefaultUserLibraryState()
                 return@withContext
             }
@@ -32,6 +37,30 @@ class QuranDatabaseSeeder(
                 .bufferedReader().use { it.readText() }
 
             val starterRoot = JSONObject(starterJson)
+            val rawTranslationSources = parseTranslationSources(starterRoot.getJSONArray("translationSources"))
+            val rawTafsirSources = parseTafsirSources(starterRoot.getJSONArray("tafsirSources"))
+            val reciters = parseReciters(starterRoot.getJSONArray("reciters"))
+
+            if (alreadyHasCoreText) {
+                val existingTrMap = quranDao.getAllTranslationSources().associateBy { it.id }
+                val mergedTr = rawTranslationSources.map { src ->
+                    val prev = existingTrMap[src.id]
+                    if (prev != null) src.copy(isDownloaded = prev.isDownloaded, isEnabled = prev.isEnabled) else src
+                }
+                val existingTafsirMap = quranDao.getAllTafsirSources().associateBy { it.id }
+                val mergedTafsir = rawTafsirSources.map { src ->
+                    val prev = existingTafsirMap[src.id]
+                    if (prev != null) src.copy(isDownloaded = prev.isDownloaded, isEnabled = prev.isEnabled) else src
+                }
+                database.withTransaction {
+                    quranDao.insertTranslationSources(mergedTr)
+                    quranDao.insertTafsirSources(mergedTafsir)
+                    quranDao.insertReciters(reciters)
+                }
+                ensureDefaultUserLibraryState()
+                return@withContext
+            }
+
             val ayahObjects = starterRoot.getJSONArray("ayahs")
             val downloadedSurahs = mutableSetOf<Int>()
             for (i in 0 until ayahObjects.length()) {
@@ -63,9 +92,8 @@ class QuranDatabaseSeeder(
                 )
             }
 
-            val translationSources = parseTranslationSources(starterRoot.getJSONArray("translationSources"))
-            val tafsirSources = parseTafsirSources(starterRoot.getJSONArray("tafsirSources"))
-            val reciters = parseReciters(starterRoot.getJSONArray("reciters"))
+            val translationSources = rawTranslationSources
+            val tafsirSources = rawTafsirSources
 
             val ayahs = mutableListOf<AyahEntity>()
             val words = mutableListOf<WordEntity>()
@@ -76,6 +104,7 @@ class QuranDatabaseSeeder(
 
             val translatorNamesById = translationSources.associate { it.id to (it.languageCode to it.translatorName) }
             val tafsirNamesById = tafsirSources.associate { it.id to (it.languageCode to it.tafsirName) }
+            val coreTimestampReciters = reciters.filter { it.id in setOf(1, 7, 9) }
 
             for (i in 0 until ayahObjects.length()) {
                 val obj = ayahObjects.getJSONObject(i)
@@ -148,7 +177,7 @@ class QuranDatabaseSeeder(
 
                 val surahPadded = surahId.toString().padStart(3, '0')
                 val ayahPadded = ayahNumber.toString().padStart(3, '0')
-                for (reciter in reciters) {
+                for (reciter in coreTimestampReciters) {
                     audioSegments.add(
                         AudioSegmentEntity(
                             reciterId = reciter.id,

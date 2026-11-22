@@ -136,12 +136,15 @@ class QuranAudioController(
         scope.launch {
             val verseKey = "$surahId:$ayahNumber"
             val ayah = quranDao.getAyahByKey(verseKey)
-            val segment = if (ayah != null) quranDao.getAudioSegment(reciterId, ayah.id) else null
-            currentSegments = segment?.wordTimestampSegmentsJson?.let { HifzLoopEngine.parseWordSegments(it) }
+            val reciterSegment = if (ayah != null) quranDao.getAudioSegment(reciterId, ayah.id) else null
+            val timingSegment = reciterSegment ?: if (ayah != null) quranDao.getAudioSegment(7, ayah.id) else null
+            currentSegments = timingSegment?.wordTimestampSegmentsJson?.let { HifzLoopEngine.parseWordSegments(it) }
                 ?: emptyList()
             lastLoadedAyahId = ayah?.id ?: -1
 
-            val url = segment?.audioUrl ?: buildFallbackEveryAyahUrl(reciterId, surahId, ayahNumber)
+            val reciter = quranDao.getReciter(reciterId)
+            val url = reciterSegment?.audioUrl?.takeIf { it.isNotBlank() }
+                ?: buildReciterAudioUrl(reciter?.baseUrl, reciterId, surahId, ayahNumber)
             _state.update {
                 it.copy(
                     isVisible = true,
@@ -151,7 +154,7 @@ class QuranAudioController(
                     ayahNumber = ayahNumber,
                     maxAyahInSurah = maxAyahInSurah,
                     reciterId = reciterId,
-                    reciterName = reciterName,
+                    reciterName = reciter?.name ?: reciterName,
                     currentIteration = iteration,
                     activeWordPosition = null,
                     errorMessage = null
@@ -161,7 +164,7 @@ class QuranAudioController(
             ensureControllerConnected { controller ->
                 val metadata = MediaMetadata.Builder()
                     .setTitle("$surahName ($verseKey)")
-                    .setArtist(reciterName)
+                    .setArtist(reciter?.name ?: reciterName)
                     .build()
                 val mediaItem = MediaItem.Builder()
                     .setUri(url)
@@ -175,7 +178,13 @@ class QuranAudioController(
         }
     }
 
-    fun playSingleWord(wordAudioUrl: String?, fallbackSurahId: Int, fallbackAyah: Int, wordPosition: Int) {
+    fun playSingleWord(
+        wordAudioUrl: String?,
+        fallbackSurahId: Int,
+        fallbackAyah: Int,
+        wordPosition: Int,
+        speed: Float = 1.0f
+    ) {
         val url = wordAudioUrl ?: run {
             val s = fallbackSurahId.toString().padStart(3, '0')
             val a = fallbackAyah.toString().padStart(3, '0')
@@ -183,9 +192,10 @@ class QuranAudioController(
             "https://audio.qurancdn.com/wbw/${s}_${a}_${p}.mp3"
         }
         ensureControllerConnected { controller ->
+            lastLoadedAyahId = -1
             currentSegments = emptyList()
             val item = MediaItem.fromUri(url)
-            controller.playbackParameters = PlaybackParameters(1.0f)
+            controller.playbackParameters = PlaybackParameters(speed.coerceIn(0.5f, 1.5f))
             controller.setMediaItem(item)
             controller.prepare()
             controller.play()
@@ -236,7 +246,7 @@ class QuranAudioController(
     fun updateReciter(reciterId: Int, reciterName: String) {
         val current = _state.value
         _state.update { it.copy(reciterId = reciterId, reciterName = reciterName) }
-        if (current.isPlaying) {
+        if (current.isVisible) {
             playAyah(
                 current.surahId,
                 current.ayahNumber,
@@ -304,15 +314,16 @@ class QuranAudioController(
         }
     }
 
-    private fun buildFallbackEveryAyahUrl(reciterId: Int, surahId: Int, ayahNumber: Int): String {
-        val folder = when (reciterId) {
-            1 -> "Husary_128kbps"
-            9 -> "Minshawy_Murattal_128kbps"
-            else -> "Alafasy_128kbps"
+    private fun buildReciterAudioUrl(baseUrl: String?, reciterId: Int, surahId: Int, ayahNumber: Int): String {
+        val resolvedBase = baseUrl?.takeIf { it.isNotBlank() } ?: when (reciterId) {
+            1 -> "https://everyayah.com/data/Husary_128kbps/"
+            9 -> "https://everyayah.com/data/Minshawy_Murattal_128kbps/"
+            else -> "https://everyayah.com/data/Alafasy_128kbps/"
         }
+        val normalizedBase = if (resolvedBase.endsWith("/")) resolvedBase else "$resolvedBase/"
         val s = surahId.toString().padStart(3, '0')
         val a = ayahNumber.toString().padStart(3, '0')
-        return "https://everyayah.com/data/$folder/$s$a.mp3"
+        return "${normalizedBase}${s}${a}.mp3"
     }
 
     fun release() {

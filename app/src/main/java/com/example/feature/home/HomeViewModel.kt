@@ -8,6 +8,7 @@ import com.example.core.database.HabitStreakEntity
 import com.example.core.database.NoorDatabase
 import com.example.core.database.ReadingProgressEntity
 import com.example.core.database.SurahEntity
+import com.example.core.database.UserBookmarkEntity
 import com.example.core.firebase.FirestoreSyncRepository
 import com.example.core.ibadah.PrayerTimeCalculator
 import com.example.core.ibadah.PrayerTimesSummary
@@ -27,7 +28,8 @@ import kotlinx.coroutines.launch
 data class VerseOfTheDayItem(
     val ayah: AyahEntity,
     val surahName: String,
-    val translation: AyahTranslationEntity?
+    val translation: AyahTranslationEntity?,
+    val isBookmarked: Boolean = false
 )
 
 data class HomeUiState(
@@ -72,24 +74,24 @@ class HomeViewModel(
         }
     }
 
-    val uiState: StateFlow<HomeUiState> = combine(
+    private val coreHomeFlow = combine(
         preferencesRepository.preferencesFlow,
         userLibraryDao.observeReadingProgress(),
         userLibraryDao.observeRecentStreaks(),
         quranDao.observeAllSurahs(),
+        userLibraryDao.observeBookmarks()
+    ) { prefs, progress, streaks, surahs, bookmarks ->
+        Triple(prefs, progress, Triple(streaks, surahs, bookmarks))
+    }
+
+    val uiState: StateFlow<HomeUiState> = combine(
+        coreHomeFlow,
         verseOfTheDayFlow,
         _tasbeehPhraseIdx
-    ) { array ->
-        @Suppress("UNCHECKED_CAST")
-        val prefs = array[0] as UserPreferences
-        val progress = (array[1] as ReadingProgressEntity?) ?: ReadingProgressEntity()
-        @Suppress("UNCHECKED_CAST")
-        val streaks = array[2] as List<HabitStreakEntity>
-        @Suppress("UNCHECKED_CAST")
-        val surahs = array[3] as List<SurahEntity>
-        @Suppress("UNCHECKED_CAST")
-        val votdTriple = array[4] as Triple<AyahEntity, SurahEntity?, List<AyahTranslationEntity>>?
-        val phraseIdx = array[5] as Int
+    ) { core, votdTriple, phraseIdx ->
+        val prefs = core.first
+        val progress = core.second ?: ReadingProgressEntity()
+        val (streaks, surahs, bookmarks) = core.third
 
         val todayKey = StreakCalculator.todayDateKey()
         val todayStreak = streaks.firstOrNull { it.dateKey == todayKey }
@@ -101,6 +103,7 @@ class HomeViewModel(
                 .ifBlank { it.nameTransliteration }
         } ?: "Al-Fatihah"
 
+        val bookmarkedKeys = bookmarks.map { it.verseKey }.toSet()
         val votdItem = votdTriple?.let { (ayah, surah, translations) ->
             val sName = surah?.let {
                 BidiUtils.extractLocalizedSurahName(it.localizedNamesJson, prefs.uiLanguageCode)
@@ -109,7 +112,12 @@ class HomeViewModel(
             val preferredTr = translations.firstOrNull { it.languageCode == prefs.uiLanguageCode }
                 ?: translations.firstOrNull { it.languageCode == "bn" }
                 ?: translations.firstOrNull()
-            VerseOfTheDayItem(ayah, sName, preferredTr)
+            VerseOfTheDayItem(
+                ayah = ayah,
+                surahName = sName,
+                translation = preferredTr,
+                isBookmarked = ayah.verseKey in bookmarkedKeys
+            )
         }
 
         val (gregorian, hijri) = BidiUtils.formatGregorianAndHijriDate(prefs.uiLanguageCode)
@@ -165,6 +173,30 @@ class HomeViewModel(
     fun updateLocation(name: String, latitude: Double, longitude: Double) {
         viewModelScope.launch {
             preferencesRepository.setLocation(name, latitude, longitude)
+        }
+    }
+
+    fun toggleVerseOfDayBookmark(item: VerseOfTheDayItem) {
+        viewModelScope.launch {
+            val existing = userLibraryDao.getBookmarkByVerseKey(item.ayah.verseKey)
+            if (existing != null) {
+                userLibraryDao.deleteBookmark(existing.id)
+                firestoreSyncRepository.deleteBookmark(existing.id)
+            } else {
+                val now = System.currentTimeMillis()
+                val bookmark = UserBookmarkEntity(
+                    id = "bm_${item.ayah.verseKey.replace(':', '_')}",
+                    verseKey = item.ayah.verseKey,
+                    surahId = item.ayah.surahId,
+                    ayahNumber = item.ayah.ayahNumber,
+                    collectionId = "favorites",
+                    label = "${item.surahName} ${item.ayah.verseKey}",
+                    createdAtEpochMs = now,
+                    updatedAtEpochMs = now
+                )
+                userLibraryDao.insertBookmark(bookmark)
+                firestoreSyncRepository.upsertBookmark(bookmark)
+            }
         }
     }
 }

@@ -1,13 +1,19 @@
 package com.example
 
+import androidx.test.core.app.ApplicationProvider
 import com.example.core.audio.HifzLoopConfig
 import com.example.core.audio.HifzLoopEngine
 import com.example.core.audio.LoopAdvanceResult
 import com.example.core.audio.WordAudioSegment
 import com.example.core.database.HabitStreakEntity
+import com.example.core.database.WordEntity
+import com.example.core.database.WordTranslationEntity
 import com.example.core.ibadah.PrayerTimeCalculator
 import com.example.core.ibadah.StreakCalculator
 import com.example.core.localization.BidiUtils
+import com.example.core.localization.SegmentRoleType
+import com.example.core.localization.WordMorphologyAnalyzer
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -117,5 +123,42 @@ class NoorUnitTests {
         // Qibla bearing from Dhaka (23.81, 90.41) toward Makkah (21.42, 39.82) points West-Southwest (~277 deg)
         val dhakaQibla = PrayerTimeCalculator.calculateQiblaBearing(23.8103, 90.4125)
         assertTrue("Expected WSW bearing ~277°, got $dhakaQibla", dhakaQibla in 265f..288f)
+    }
+
+    // 4. Word Morphology Inspector & Starter JSON Qari/Tafsir catalog integrity
+    @Test
+    fun testWordMorphologyAndStarterCatalogCounts() {
+        val word = WordEntity(
+            id = 101L,
+            ayahId = 1,
+            position = 1,
+            textUthmani = "بِسْمِ",
+            textIndopak = "بِسْمِ",
+            transliteration = "Bismi",
+            rootArabic = "س م و",
+            lemmaArabic = "اِسْم",
+            grammarTagJson = "Preposition + Noun, Genitive",
+            audioUrl = "https://audio.qurancdn.com/wbw/001_001_001.mp3"
+        )
+        val translations = listOf(
+            WordTranslationEntity(101L, "en", "In the name of"),
+            WordTranslationEntity(101L, "bn", "নামে"),
+            WordTranslationEntity(101L, "ur", "نام سے")
+        )
+        val analysis = WordMorphologyAnalyzer.analyze(word, translations)
+        assertEquals("Preposition + Noun", analysis.partOfSpeechEn)
+        assertTrue(analysis.grammaticalCaseOrMood.contains("Genitive"))
+        assertTrue(analysis.segments.any { it.roleType == SegmentRoleType.PREFIX && it.arabicPrefixOrPart == "بِـ" })
+        assertTrue(analysis.segments.any { it.roleType == SegmentRoleType.STEM })
+        assertEquals("বাংলা (Bangla)", analysis.allMeanings.first().first)
+        assertEquals(3, analysis.allMeanings.size)
+
+        // Verify starter catalog contains >= 50 Qaris, >= 15 Tafsirs, >= 12 Translations
+        val appContext = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val starterText = appContext.assets.open("quran_starter/quran_starter.json").bufferedReader().use { it.readText() }
+        val root = JSONObject(starterText)
+        assertTrue("Expected >= 50 reciters", root.getJSONArray("reciters").length() >= 50)
+        assertTrue("Expected >= 15 tafsir sources", root.getJSONArray("tafsirSources").length() >= 15)
+        assertTrue("Expected >= 12 translation sources", root.getJSONArray("translationSources").length() >= 12)
     }
 }

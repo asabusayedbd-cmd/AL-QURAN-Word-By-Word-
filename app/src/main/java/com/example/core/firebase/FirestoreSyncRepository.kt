@@ -345,6 +345,21 @@ class FirestoreSyncRepository(
         }
     }
 
+    suspend fun deleteNote(noteId: String): Result<Unit> {
+        val uid = auth.currentUser?.uid?.takeIf { it.isNotBlank() } ?: return Result.success(Unit)
+        val docId = sanitizeDocId(noteId)
+        val docRef = db.collection("users").document(uid).collection("notes").document(docId)
+        return try {
+            docRef.delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docRef.path)
+            Result.failure(e)
+        }
+    }
+
     suspend fun upsertProgress(progress: ReadingProgressEntity): Result<Unit> {
         val uid = auth.currentUser?.uid?.takeIf { it.isNotBlank() } ?: return Result.success(Unit)
         val docRef = db.collection("users").document(uid).collection("progress").document("main")

@@ -1,5 +1,6 @@
 package com.example.feature.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,17 +17,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,16 +45,21 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.localization.BidiUtils
 import com.example.core.localization.NoorThemeMode
+import com.example.ui.components.QariPickerModalSheet
 
 private val UI_LANGUAGES = listOf(
     "en" to "English",
@@ -73,6 +85,20 @@ fun SettingsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    var showQariPicker by remember { mutableStateOf(false) }
+    var translationLangFilter by remember { mutableStateOf("ALL") }
+    var tafsirLangFilter by remember { mutableStateOf("ALL") }
+
+    val activeReciter = state.reciters.firstOrNull { it.id == state.preferences.activeReciterId }
+    val filteredTranslations = remember(state.translationSources, translationLangFilter) {
+        if (translationLangFilter == "ALL") state.translationSources
+        else state.translationSources.filter { it.languageCode.equals(translationLangFilter, ignoreCase = true) }
+    }
+    val filteredTafsirs = remember(state.tafsirSources, tafsirLangFilter) {
+        if (tafsirLangFilter == "ALL") state.tafsirSources
+        else state.tafsirSources.filter { it.languageCode.equals(tafsirLangFilter, ignoreCase = true) }
+    }
+
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
             modifier = Modifier
@@ -86,7 +112,9 @@ fun SettingsScreen(
                     Surface(
                         color = MaterialTheme.colorScheme.secondaryContainer,
                         shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.clearStatusMessage() }
                     ) {
                         Text(
                             text = msg,
@@ -209,7 +237,128 @@ fun SettingsScreen(
                 }
             }
 
-            // 4. Word-by-Word & Multi-Translation Languages
+            // 4. Qari / Reciter Library (55+ Genuine Qaris)
+            item {
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Reciter / Qari (${state.reciters.size} Verified)",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            }
+                        }
+                        Text(
+                            text = activeReciter?.let { "${it.name} (${it.localizedName}) • ${it.style}" }
+                                ?: "Mishary Rashid Alafasy",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                        FilledTonalButton(
+                            onClick = { showQariPicker = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("settings_choose_qari_button")
+                        ) {
+                            Icon(Icons.Default.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Browse & Select Qari (${state.reciters.size} Reciters)")
+                        }
+                    }
+                }
+            }
+
+            // 5. Verified Tafsir Library (18+ Classical & Contemporary Tafsirs + Live API Sync)
+            item {
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Tafsir Library (${state.tafsirSources.size})",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = viewModel::syncRemoteTafsirCatalog,
+                                enabled = !state.isRefreshingTafsirs,
+                                modifier = Modifier.testTag("sync_tafsir_catalog_button")
+                            ) {
+                                if (state.isRefreshingTafsirs) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Sync Catalog")
+                            }
+                        }
+
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val langs = listOf("ALL") + state.tafsirSources.map { it.languageCode.uppercase() }.distinct()
+                            items(langs) { code ->
+                                FilterChip(
+                                    selected = tafsirLangFilter == code,
+                                    onClick = { tafsirLangFilter = code },
+                                    label = { Text(if (code == "ALL") "All" else code) }
+                                )
+                            }
+                        }
+
+                        HorizontalDivider()
+
+                        filteredTafsirs.forEach { src ->
+                            val isSelected = src.id == state.preferences.activeTafsirSourceId
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { viewModel.selectDefaultTafsirSource(src) }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = src.tafsirName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                    Text(
+                                        text = "${src.languageName} • ${if (src.isDownloaded) "Offline Ready" else "On-Demand API"}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (isSelected) {
+                                    Icon(Icons.Default.Check, contentDescription = "Default Tafsir", tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 6. Word-by-Word & Multi-Translation Languages
             item {
                 ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                     Column(
@@ -217,7 +366,7 @@ fun SettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = stringResource(R.string.content_languages_title),
+                            text = "${stringResource(R.string.content_languages_title)} (${state.translationSources.size})",
                             style = MaterialTheme.typography.titleMedium
                         )
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -230,8 +379,18 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val trLangs = listOf("ALL") + state.translationSources.map { it.languageCode.uppercase() }.distinct()
+                            items(trLangs) { code ->
+                                FilterChip(
+                                    selected = translationLangFilter == code,
+                                    onClick = { translationLangFilter = code },
+                                    label = { Text(if (code == "ALL") "All" else code) }
+                                )
+                            }
+                        }
                         HorizontalDivider()
-                        state.translationSources.forEach { src ->
+                        filteredTranslations.forEach { src ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -260,7 +419,7 @@ fun SettingsScreen(
                 }
             }
 
-            // 5. Offline Surah Download Manager (Highlights popular Surahs)
+            // 7. Offline Surah Download Manager (Highlights popular Surahs)
             item {
                 Text(
                     text = stringResource(R.string.download_manager_title),
@@ -305,5 +464,17 @@ fun SettingsScreen(
 
             item { Spacer(modifier = Modifier.height(72.dp)) }
         }
+    }
+
+    if (showQariPicker && state.reciters.isNotEmpty()) {
+        QariPickerModalSheet(
+            reciters = state.reciters,
+            activeReciterId = state.preferences.activeReciterId,
+            onSelectReciter = {
+                viewModel.setActiveReciter(it)
+                showQariPicker = false
+            },
+            onDismiss = { showQariPicker = false }
+        )
     }
 }

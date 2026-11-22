@@ -1,39 +1,53 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,6 +77,8 @@ fun AudioHifzBar(
     if (!playbackState.isVisible) return
 
     var expanded by rememberSaveable { mutableStateOf(false) }
+    var showQariPicker by remember { mutableStateOf(false) }
+
     val progress = if (playbackState.durationMs > 0L) {
         (playbackState.positionMs.toFloat() / playbackState.durationMs.toFloat()).coerceIn(0f, 1f)
     } else {
@@ -120,6 +136,7 @@ fun AudioHifzBar(
                 Column(
                     modifier = Modifier
                         .weight(1f)
+                        .clickable { showQariPicker = true }
                         .padding(horizontal = 8.dp)
                 ) {
                     Text(
@@ -129,7 +146,7 @@ fun AudioHifzBar(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = playbackState.errorMessage ?: playbackState.reciterName,
+                        text = playbackState.errorMessage ?: "${playbackState.reciterName} (${reciters.size} Qaris)",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (playbackState.errorMessage != null) {
                             MaterialTheme.colorScheme.error
@@ -168,25 +185,38 @@ fun AudioHifzBar(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         HorizontalDivider()
-                        Text(
-                            text = stringResource(R.string.hifz_controls),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-
-                        // Reciter selector
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            reciters.take(3).forEach { reciter ->
+                            Text(
+                                text = stringResource(R.string.hifz_controls),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            FilledTonalButton(
+                                onClick = { showQariPicker = true },
+                                modifier = Modifier.testTag("open_all_qaris_button")
+                            ) {
+                                Icon(Icons.Default.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Choose Qari (${reciters.size})")
+                            }
+                        }
+
+                        // Horizontal scrollable Quick Qari Strip
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val featured = reciters.sortedByDescending { it.id == playbackState.reciterId }.take(12)
+                            items(featured, key = { it.id }) { reciter ->
                                 FilterChip(
                                     selected = reciter.id == playbackState.reciterId,
                                     onClick = { onSelectReciter(reciter) },
                                     label = {
                                         Text(
-                                            text = reciter.name.substringBefore(" ").ifBlank { reciter.name },
-                                            maxLines = 1
+                                            text = reciter.name,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     },
                                     modifier = Modifier.testTag("reciter_chip_${reciter.id}")
@@ -199,8 +229,9 @@ fun AudioHifzBar(
                             text = stringResource(R.string.repeat_ayah),
                             style = MaterialTheme.typography.labelLarge
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(1 to "1x", 3 to "3x", 5 to "5x", 10 to "10x", 0 to "∞").forEach { (count, label) ->
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val repeatOptions = listOf(1 to "1x", 3 to "3x", 5 to "5x", 10 to "10x", 0 to "∞")
+                            items(repeatOptions) { (count, label) ->
                                 FilterChip(
                                     selected = playbackState.hifzConfig.repeatPerAyah == count,
                                     onClick = { onUpdateHifzConfig { it.copy(repeatPerAyah = count) } },
@@ -221,7 +252,7 @@ fun AudioHifzBar(
                                     FilterChip(
                                         selected = playbackState.hifzConfig.pauseSecondsAfterAyah == sec,
                                         onClick = { onUpdateHifzConfig { it.copy(pauseSecondsAfterAyah = sec) } },
-                                        label = { Text("+${label}") }
+                                        label = { Text("+$label") }
                                     )
                                 }
                             }
@@ -310,6 +341,139 @@ fun AudioHifzBar(
                                 ) {
                                     Text("B +")
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showQariPicker) {
+        QariPickerModalSheet(
+            reciters = reciters,
+            activeReciterId = playbackState.reciterId,
+            onSelectReciter = {
+                onSelectReciter(it)
+                showQariPicker = false
+            },
+            onDismiss = { showQariPicker = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun QariPickerModalSheet(
+    reciters: List<AudioReciterEntity>,
+    activeReciterId: Int,
+    onSelectReciter: (AudioReciterEntity) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var search by remember { mutableStateOf("") }
+    var styleFilter by remember { mutableStateOf("All") }
+    val styles = remember(reciters) {
+        listOf("All") + reciters.map { it.style }.distinct().sorted()
+    }
+    val filtered = remember(reciters, search, styleFilter) {
+        reciters.filter { reciter ->
+            val matchesStyle = styleFilter == "All" || reciter.style.equals(styleFilter, ignoreCase = true)
+            val q = search.trim()
+            val matchesQuery = q.isEmpty() ||
+                reciter.name.contains(q, ignoreCase = true) ||
+                reciter.localizedName.contains(q, ignoreCase = true) ||
+                reciter.style.contains(q, ignoreCase = true)
+            matchesStyle && matchesQuery
+        }
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Select Qari / Reciter (${reciters.size} Verified Reciters)",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                placeholder = { Text("Search Qari name, Arabic, or style…") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (search.isNotEmpty()) {
+                        IconButton(onClick = { search = "" }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear")
+                        }
+                    }
+                },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("qari_search_input")
+            )
+
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(styles) { st ->
+                    FilterChip(
+                        selected = styleFilter == st,
+                        onClick = { styleFilter = st },
+                        label = { Text(st) }
+                    )
+                }
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(filtered, key = { it.id }) { reciter ->
+                    val isSelected = reciter.id == activeReciterId
+                    Surface(
+                        shape = MaterialTheme.shapes.medium,
+                        color = if (isSelected) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("qari_picker_item_${reciter.id}")
+                            .clickable { onSelectReciter(reciter) }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = reciter.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                                Text(
+                                    text = "${reciter.localizedName} • ${reciter.style}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (isSelected) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = "Selected Qari",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
                             }
                         }
                     }

@@ -19,13 +19,16 @@ import com.example.core.database.TafsirSourceEntity
 import com.example.core.database.UserBookmarkEntity
 import com.example.core.database.UserNoteEntity
 import com.example.core.database.WordEntity
+import com.example.core.database.WordOccurrenceProjection
 import com.example.core.firebase.FirestoreSyncRepository
 import com.example.core.ibadah.StreakCalculator
 import com.example.core.localization.BidiUtils
+import com.example.core.localization.DetailedWordAnalysis
 import com.example.core.localization.PreferencesRepository
 import com.example.core.localization.QuranScriptType
 import com.example.core.localization.ReaderViewMode
 import com.example.core.localization.UserPreferences
+import com.example.core.localization.WordMorphologyAnalyzer
 import com.example.core.network.QuranSyncRepository
 import com.example.ui.components.WordDisplayItem
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -51,11 +54,15 @@ data class WordInspectorState(
     val word: WordEntity,
     val localizedMeaning: String,
     val ayahVerseKey: String,
-    val rootOccurrencesCount: Int
+    val surahName: String,
+    val rootOccurrencesCount: Int,
+    val rootOccurrences: List<WordOccurrenceProjection>,
+    val analysis: DetailedWordAnalysis
 )
 
 data class ReaderUiState(
     val surah: SurahEntity? = null,
+    val allSurahs: List<SurahEntity> = emptyList(),
     val localizedSurahName: String = "",
     val ayahs: List<AyahDisplayBundle> = emptyList(),
     val preferences: UserPreferences = UserPreferences(),
@@ -161,13 +168,15 @@ class ReaderViewModel(
         if (ayah == null) flowOf(null) else userLibraryDao.observeNoteForVerse(ayah.verseKey)
     }
 
-    val uiState: StateFlow<ReaderUiState> = combine(
-        _surahId.flatMapLatest { quranDao.observeSurah(it) },
-        bundlesFlow,
-        preferencesRepository.preferencesFlow,
-        audioController.state,
+    private val catalogFlow = combine(
+        quranDao.observeAllSurahs(),
         quranDao.observeReciters(),
-        quranDao.observeTafsirSources(),
+        quranDao.observeTafsirSources()
+    ) { surahs, reciters, tafsirs ->
+        Triple(surahs, reciters, tafsirs)
+    }
+
+    private val overlayFlow = combine(
         _selectedTafsirAyah,
         selectedTafsirsFlow,
         selectedNoteFlow,
@@ -176,25 +185,40 @@ class ReaderViewModel(
         _downloadError,
         _aiStudyState,
         _inspectedWord
-    ) { array ->
-        val surah = array[0] as SurahEntity?
+    ) { arr ->
         @Suppress("UNCHECKED_CAST")
-        val bundles = array[1] as List<AyahDisplayBundle>
-        val prefs = array[2] as UserPreferences
-        val playback = array[3] as AudioPlaybackState
-        @Suppress("UNCHECKED_CAST")
-        val reciters = array[4] as List<AudioReciterEntity>
-        @Suppress("UNCHECKED_CAST")
-        val tafsirSources = array[5] as List<TafsirSourceEntity>
-        val selectedAyah = array[6] as AyahEntity?
-        @Suppress("UNCHECKED_CAST")
-        val selectedTafsirs = array[7] as List<AyahTafsirEntity>
-        val selectedNote = array[8] as UserNoteEntity?
-        val fetchingTafsir = array[9] as Boolean
-        val downloadingSurah = array[10] as Boolean
-        val dlErr = array[11] as String?
-        val aiState = array[12] as AiStudyUiState
-        val inspected = array[13] as WordInspectorState?
+        Triple(
+            arr[0] as AyahEntity?,
+            arr[1] as List<AyahTafsirEntity>,
+            arr[2] as UserNoteEntity?
+        ) to Triple(
+            arr[3] as Boolean,
+            arr[4] as Boolean,
+            Triple(arr[5] as String?, arr[6] as AiStudyUiState, arr[7] as WordInspectorState?)
+        )
+    }
+
+    private val readerCoreFlow = combine(
+        _surahId.flatMapLatest { quranDao.observeSurah(it) },
+        bundlesFlow,
+        preferencesRepository.preferencesFlow,
+        audioController.state
+    ) { surah, bundles, prefs, playback ->
+        Pair(surah to bundles, prefs to playback)
+    }
+
+    val uiState: StateFlow<ReaderUiState> = combine(
+        readerCoreFlow,
+        catalogFlow,
+        overlayFlow
+    ) { core, catalog, overlay ->
+        val (surah, bundles) = core.first
+        val (prefs, playback) = core.second
+        val (allSurahs, reciters, tafsirSources) = catalog
+        val (selectedTriple, flagsAndAi) = overlay
+        val (selectedAyah, selectedTafsirs, selectedNote) = selectedTriple
+        val (fetchingTafsir, downloadingSurah, errAiWord) = flagsAndAi
+        val (dlErr, aiState, inspected) = errAiWord
 
         val localizedName = surah?.let {
             BidiUtils.extractLocalizedSurahName(it.localizedNamesJson, prefs.uiLanguageCode)
@@ -203,6 +227,7 @@ class ReaderViewModel(
 
         ReaderUiState(
             surah = surah,
+            allSurahs = allSurahs,
             localizedSurahName = localizedName,
             ayahs = bundles,
             preferences = prefs,
@@ -291,14 +316,26 @@ class ReaderViewModel(
 
     fun inspectWord(item: WordDisplayItem, verseKey: String) {
         viewModelScope.launch {
-            val occ = if (item.word.rootArabic.isNotBlank()) {
-                quranDao.getWordsByRoot(item.word.rootArabic).size
-            } else 1
+            val allTranslations = quranDao.getWordTranslations(item.word.id)
+            val analysis = WordMorphologyAnalyzer.analyze(item.word, allTranslations)
+            val occurrences = if (item.word.rootArabic.isNotBlank()) {
+                quranDao.getRootOccurrences(item.word.rootArabic)
+            } else {
+                emptyList()
+            }
+            val totalOccurrencesCount = if (item.word.rootArabic.isNotBlank()) {
+                quranDao.getWordsByRoot(item.word.rootArabic).size.coerceAtLeast(occurrences.size)
+            } else {
+                1
+            }
             _inspectedWord.value = WordInspectorState(
                 word = item.word,
                 localizedMeaning = item.localizedMeaning,
                 ayahVerseKey = verseKey,
-                rootOccurrencesCount = occ
+                surahName = uiState.value.localizedSurahName,
+                rootOccurrencesCount = totalOccurrencesCount,
+                rootOccurrences = occurrences,
+                analysis = analysis
             )
         }
     }
@@ -307,12 +344,18 @@ class ReaderViewModel(
         _inspectedWord.value = null
     }
 
-    fun playInspectedWord() {
+    fun playInspectedWord(speed: Float = 1.0f) {
         val inspected = _inspectedWord.value ?: return
         val parts = inspected.ayahVerseKey.split(":")
         val sId = parts.getOrNull(0)?.toIntOrNull() ?: _surahId.value
         val aNum = parts.getOrNull(1)?.toIntOrNull() ?: 1
-        audioController.playSingleWord(inspected.word.audioUrl, sId, aNum, inspected.word.position)
+        audioController.playSingleWord(
+            wordAudioUrl = inspected.word.audioUrl,
+            fallbackSurahId = sId,
+            fallbackAyah = aNum,
+            wordPosition = inspected.word.position,
+            speed = speed
+        )
     }
 
     fun toggleBookmark(ayah: AyahEntity) {

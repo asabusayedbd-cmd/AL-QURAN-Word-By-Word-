@@ -36,11 +36,13 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Flare
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
@@ -92,6 +94,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.ibadah.PrayerTimeCalculator
 import com.example.core.localization.BidiUtils
+import com.example.ui.components.ShareCardGenerator
 import com.example.ui.theme.arabicScriptFont
 import com.example.ui.theme.banglaSafeBodyStyle
 import java.util.Calendar
@@ -446,6 +449,46 @@ fun HomeScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.secondary
                                 )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = { viewModel.toggleVerseOfDayBookmark(votd) },
+                                    modifier = Modifier.testTag("votd_bookmark_button")
+                                ) {
+                                    Icon(
+                                        imageVector = if (votd.isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                        contentDescription = stringResource(R.string.cd_bookmark_ayah),
+                                        tint = if (votd.isBookmarked) {
+                                            MaterialTheme.colorScheme.secondary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        ShareCardGenerator.shareAyahAsImageCard(
+                                            context = context,
+                                            surahName = votd.surahName,
+                                            verseKey = votd.ayah.verseKey,
+                                            arabicText = votd.ayah.textUthmani,
+                                            translationText = votd.translation?.translatedText.orEmpty(),
+                                            translatorName = votd.translation?.translatorName ?: "Verified Translation"
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("votd_share_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = stringResource(R.string.cd_share_ayah),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     }

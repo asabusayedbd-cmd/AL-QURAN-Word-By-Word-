@@ -118,6 +118,7 @@ class LibraryViewModel(
     fun deleteNote(noteId: String) {
         viewModelScope.launch {
             userLibraryDao.deleteNote(noteId)
+            firestoreSyncRepository.deleteNote(noteId)
         }
     }
 

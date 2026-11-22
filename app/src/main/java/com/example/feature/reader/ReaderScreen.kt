@@ -24,12 +24,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
@@ -37,10 +39,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -102,22 +107,30 @@ fun ReaderScreen(
     val tajweedPalette = LocalTajweedPalette.current
 
     var showDisplaySheet by remember { mutableStateOf(false) }
+    var showSurahSwitcher by remember { mutableStateOf(false) }
     var showAiCompanion by remember { mutableStateOf(false) }
     var mushafChromeVisible by rememberSaveable { mutableStateOf(true) }
+    var pendingTargetAyah by rememberSaveable { mutableStateOf(targetAyah) }
 
-    // Scroll to target Ayah on first load
-    LaunchedEffect(state.ayahs.size, targetAyah) {
-        if (targetAyah > 1 && state.ayahs.isNotEmpty()) {
-            val idx = state.ayahs.indexOfFirst { it.ayah.ayahNumber == targetAyah }
-            if (idx >= 0) listState.animateScrollToItem(idx)
+    LaunchedEffect(targetAyah) {
+        pendingTargetAyah = targetAyah
+    }
+
+    val headerOffset = if (state.surah?.bismillahPre == true) 1 else 0
+
+    // Scroll to target Ayah accurately (offsetting Bismillah header when present)
+    LaunchedEffect(state.ayahs.size, pendingTargetAyah, headerOffset) {
+        if (pendingTargetAyah > 1 && state.ayahs.isNotEmpty()) {
+            val idx = state.ayahs.indexOfFirst { it.ayah.ayahNumber == pendingTargetAyah }
+            if (idx >= 0) listState.animateScrollToItem(idx + headerOffset)
         }
     }
 
     // Auto-scroll when currently playing Ayah changes
-    LaunchedEffect(state.playbackState.ayahNumber, state.playbackState.surahId, state.playbackState.isPlaying) {
-        if (state.playbackState.isPlaying && state.playbackState.surahId == surahId) {
+    LaunchedEffect(state.playbackState.ayahNumber, state.playbackState.surahId, state.playbackState.isPlaying, headerOffset) {
+        if (state.playbackState.isPlaying && state.playbackState.surahId == (state.surah?.id ?: surahId)) {
             val idx = state.ayahs.indexOfFirst { it.ayah.ayahNumber == state.playbackState.ayahNumber }
-            if (idx >= 0) listState.animateScrollToItem(idx)
+            if (idx >= 0) listState.animateScrollToItem(idx + headerOffset)
         }
     }
 
@@ -140,15 +153,26 @@ fun ReaderScreen(
                         }
                     },
                     title = {
-                        Column {
-                            Text(
-                                text = state.localizedSurahName,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        Column(
+                            modifier = Modifier
+                                .clickable { showSurahSwitcher = true }
+                                .testTag("reader_surah_switcher_trigger")
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = state.localizedSurahName,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Icon(
+                                    Icons.Default.ExpandMore,
+                                    contentDescription = "Switch Surah",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                             state.surah?.let { surah ->
                                 Text(
-                                    text = "${surah.nameArabic} • ${BidiUtils.formatNumber(surah.ayahCount, state.preferences.uiLanguageCode)} Ayahs",
+                                    text = "${surah.nameArabic} • ${BidiUtils.formatNumber(surah.ayahCount, state.preferences.uiLanguageCode)} Ayahs • Juz ${surah.startJuz}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -156,6 +180,17 @@ fun ReaderScreen(
                         }
                     },
                     actions = {
+                        if (state.ayahs.isNotEmpty()) {
+                            IconButton(
+                                onClick = { viewModel.playAyah(state.ayahs.first().ayah) },
+                                modifier = Modifier.testTag("reader_play_surah_button")
+                            ) {
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = "Play Surah"
+                                )
+                            }
+                        }
                         IconButton(
                             onClick = { showDisplaySheet = true },
                             modifier = Modifier.testTag("reader_display_settings_button")
@@ -521,7 +556,111 @@ fun ReaderScreen(
                             }
                         }
 
+                        // Previous / Next Surah Navigation Footer
+                        item {
+                            val currentSid = state.surah?.id ?: surahId
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                if (currentSid > 1) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            pendingTargetAyah = 1
+                                            viewModel.loadSurah(currentSid - 1)
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("reader_prev_surah_button")
+                                    ) {
+                                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Prev Surah")
+                                    }
+                                }
+                                if (currentSid < 114) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            pendingTargetAyah = 1
+                                            viewModel.loadSurah(currentSid + 1)
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("reader_next_surah_button")
+                                    ) {
+                                        Text("Next Surah")
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+
                         item { Spacer(modifier = Modifier.height(72.dp)) }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showSurahSwitcher && state.allSurahs.isNotEmpty()) {
+        ModalBottomSheet(onDismissRequest = { showSurahSwitcher = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Jump to Surah (114 Surahs)",
+                    style = MaterialTheme.typography.titleLarge
+                )
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(420.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(state.allSurahs, key = { it.id }) { itemSurah ->
+                        val isCurrent = itemSurah.id == (state.surah?.id ?: surahId)
+                        val title = BidiUtils.extractLocalizedSurahName(
+                            itemSurah.localizedNamesJson,
+                            state.preferences.uiLanguageCode
+                        ).ifBlank { itemSurah.nameTransliteration }
+                        Surface(
+                            shape = MaterialTheme.shapes.medium,
+                            color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    pendingTargetAyah = 1
+                                    viewModel.loadSurah(itemSurah.id)
+                                    showSurahSwitcher = false
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${itemSurah.id}. $title",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium
+                                )
+                                Text(
+                                    text = itemSurah.nameArabic,
+                                    fontFamily = arabicScriptFont(state.preferences.scriptType),
+                                    fontSize = 20.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -546,7 +685,13 @@ fun ReaderScreen(
             inspected = inspected,
             scriptType = state.preferences.scriptType,
             wbwLanguageCode = state.preferences.wbwLanguageCode,
-            onPlayWordAudio = viewModel::playInspectedWord,
+            onPlayWordAudio = { speed -> viewModel.playInspectedWord(speed) },
+            onNavigateToOccurrence = { targetS, targetA ->
+                pendingTargetAyah = targetA
+                if (targetS != (state.surah?.id ?: surahId)) {
+                    viewModel.loadSurah(targetS)
+                }
+            },
             onDismiss = viewModel::dismissWordInspector
         )
     }
